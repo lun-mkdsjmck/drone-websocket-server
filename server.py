@@ -42,7 +42,8 @@ async def handler(websocket):
                     await target.send(message)
                 except:
                     pass
-                   except websockets.ConnectionClosed:
+
+    except websockets.ConnectionClosed:
         pass
 
     except Exception as e:
