@@ -1,13 +1,22 @@
 import asyncio
 import websockets
 
-clients = {}
+clients = {
+    "controller_control": None,
+    "drone_control": None,
+    "controller_video": None,
+    "drone_video": None
+}
+
 lock = asyncio.Lock()
 
+
 async def handler(websocket):
+
     role = None
 
     try:
+        # Первое сообщение = автоматическая регистрация
         first = await websocket.recv()
 
         if isinstance(first, bytes):
@@ -16,26 +25,53 @@ async def handler(websocket):
 
         role = first.strip().lower()
 
-        if role not in ["drone", "controller"]:
-            await websocket.send("Send first message: drone or controller")
+        allowed_roles = {
+            "controller_control",
+            "drone_control",
+            "controller_video",
+            "drone_video"
+        }
+
+        if role not in allowed_roles:
+            await websocket.send("Invalid role")
             await websocket.close()
             return
 
+        # Регистрируем соединение
         async with lock:
+            old_client = clients.get(role)
+
+            if old_client:
+                try:
+                    await old_client.close()
+                except:
+                    pass
+
             clients[role] = websocket
 
         print(f"{role} connected")
 
+        # Основной цикл передачи
         while True:
+
             message = await websocket.recv()
 
-            target = None
+            target_role = None
+
+            if role == "controller_control":
+                target_role = "drone_control"
+
+            elif role == "drone_control":
+                target_role = "controller_control"
+
+            elif role == "drone_video":
+                target_role = "controller_video"
+
+            elif role == "controller_video":
+                target_role = "drone_video"
 
             async with lock:
-                if role == "drone":
-                    target = clients.get("controller")
-                else:
-                    target = clients.get("drone")
+                target = clients.get(target_role)
 
             if target:
                 try:
@@ -47,18 +83,22 @@ async def handler(websocket):
         pass
 
     except Exception as e:
-        print(e)
+        print(f"{role}: {e}")
 
     finally:
-        if role:
-            async with lock:
-                if clients.get(role) == websocket:
-                    del clients[role]
 
-        print(f"{role} disconnected")
+        if role:
+
+            async with lock:
+
+                if clients.get(role) == websocket:
+                    clients[role] = None
+
+            print(f"{role} disconnected")
 
 
 async def main():
+
     print("WebSocket server started")
 
     async with websockets.serve(
@@ -70,6 +110,7 @@ async def main():
         ping_interval=20,
         ping_timeout=20
     ):
+
         await asyncio.Future()
 
 
