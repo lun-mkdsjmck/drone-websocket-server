@@ -16,7 +16,7 @@ async def handler(websocket):
     role = None
 
     try:
-        # Первое сообщение = автоматическая регистрация
+        # Первое сообщение от клиента = автоматическая регистрация
         first = await websocket.recv()
 
         if isinstance(first, bytes):
@@ -33,11 +33,11 @@ async def handler(websocket):
         }
 
         if role not in allowed_roles:
-            await websocket.send("Invalid role")
+            print(f"Unknown role: {role}")
             await websocket.close()
             return
 
-        # Регистрируем соединение
+        # Если такое соединение уже было — закрываем старое
         async with lock:
             old_client = clients.get(role)
 
@@ -51,12 +51,10 @@ async def handler(websocket):
 
         print(f"{role} connected")
 
-        # Основной цикл передачи
+        # Передача сообщений
         while True:
 
             message = await websocket.recv()
-
-            target_role = None
 
             if role == "controller_control":
                 target_role = "drone_control"
@@ -70,14 +68,19 @@ async def handler(websocket):
             elif role == "controller_video":
                 target_role = "drone_video"
 
+            else:
+                continue
+
             async with lock:
                 target = clients.get(target_role)
 
             if target:
                 try:
                     await target.send(message)
-                except:
+                except websockets.ConnectionClosed:
                     pass
+                except Exception as e:
+                    print(f"Send error: {e}")
 
     except websockets.ConnectionClosed:
         pass
@@ -88,9 +91,7 @@ async def handler(websocket):
     finally:
 
         if role:
-
             async with lock:
-
                 if clients.get(role) == websocket:
                     clients[role] = None
 
@@ -110,10 +111,8 @@ async def main():
         ping_interval=20,
         ping_timeout=20
     ):
-
         await asyncio.Future()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-  
