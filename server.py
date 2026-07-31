@@ -1,23 +1,20 @@
 import asyncio
 import websockets
 import socket
+import threading  # Добавили стандартные потоки Linux/Windows
 
 clients = {
     "controller_control": None,
     "drone_control": None,
-    # WebSocket для видео нам больше не нужен, его заменяет UDP ниже
 }
 
 lock = asyncio.Lock()
-
-# Global переменная для хранения текущего сотового IP-адреса пульта
 pult_udp_address = None
 
 # ==================== УЛЬТРАБЫСТРЫЙ UDP МОСТ ДЛЯ ВИДЕО ====================
 def run_udp_video_repeater():
     global pult_udp_address
     
-    # Открываем порты для видео и пинга
     video_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     video_socket.bind(('0.0.0.0', 5001))
     video_socket.setblocking(False)
@@ -26,18 +23,19 @@ def run_udp_video_repeater():
     ping_socket.bind(('0.0.0.0', 5002))
     ping_socket.setblocking(False)
 
-    print("📹 UDP Видео-мост запущен: Порт 5001 (Видео), Порт 5002 (Пинг Пульта)")
+    print("📹 UDP Видео-мост успешно запущен в отдельном системном потоке!")
+    print("Ожидание видео на порту 5001 и пинга пульта на порту 5002...")
 
     receive_buffer = bytearray(1500)
 
     while True:
-        # 1. Проверяем, пришел ли пинг от пульта, чтобы обновить его мобильный IP
+        # 1. Проверяем пинг от пульта
         try:
             data, addr = ping_socket.recvfrom(1024)
             if data == b"PULSE":
                 if pult_udp_address != (addr, 5001):
                     pult_udp_address = (addr, 5001)
-                    print(f"🎮 UDP Пульт на связи! Маршрут видео зафиксирован на: {addr}")
+                    print(f"实用 🎮 UDP Пульт на связи! Маршрут зафиксирован на: {addr}")
         except BlockingIOError:
             pass
 
@@ -114,11 +112,13 @@ async def main():
     print("🚀 ГИБРИДНЫЙ СЕРВЕР ДЛЯ ДРОНА ЗАПУЩЕН!")
     print("==================================================")
     
-    # Запускаем UDP видео-поток в параллельном системном потоке, чтобы он не тормозил асинхронный сиквел
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, run_udp_video_repeater)
+    # ИСПРАВЛЕНИЕ: Запускаем UDP видеомост в полноценном параллельном потоке ОС,
+    # который вообще не пересекается с асинхронным кодом вебсокетов
+    udp_thread = threading.Thread(target=run_udp_video_repeater, daemon=True)
+    udp_thread.start()
 
-    # Запускаем ваш вебсокет для стиков управления на порту 8080
+    # Теперь асинхронный сервер свободно запускается на порту 8080
+    print("☁️ Запуск асинхронного WebSocket сервера для команд на порту 8080...")
     async with websockets.serve(
         handler,
         "0.0.0.0",
