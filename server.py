@@ -63,27 +63,37 @@ async def handler(websocket):
             # Получаем пакет из сети
             message = await websocket.recv()
 
-            # ПЕРЕХВАТ КОМАНДЫ СОПРЯЖЕНИЯ ОТ ПУЛЬТА
-            if role == "controller_control" and message == "START_MISSION":
-                async with lock:
-                    # Проверяем, в сети ли оба устройства для обоюдного сопряжения
-                    has_drone = clients.get("drone_control") is not None
-                    has_remote = clients.get("controller_control") is not None
-                    
-                    if has_drone and has_remote:
-                        mission_started = True
-                        print("🚀 ОБОЮДНОЕ СОПРЯЖЕНИЕ АКТИВИРОВАНО! Поток H.264 открыт.")
-                        # Шлем подтверждение обратно на пульт и дрон, чтобы они знали о старте
+            # 🔥 УМНЫЙ ДВУХСТОРОННИЙ ПЕРЕХВАТ КОМАНД СИНХРОНИЗАЦИИ ОТ ПУЛЬТА
+            if role == "controller_video":
+                if message == "START_MISSION":
+                    async with lock:
+                        has_drone = clients.get("drone_control") is not None or clients.get("drone_video") is not None
+                        has_remote = clients.get("controller_control") is not None or clients.get("controller_video") is not None
+                        
+                        if has_drone and has_remote:
+                            mission_started = True
+                            print("🚀 ОБОЮДНОЕ СОПРЯЖЕНИЕ АКТИВИРОВАНО! Поток H.264 открыт.")
+                            try:
+                                if clients.get("controller_control"): await clients["controller_control"].send("MISSION_ACTIVE")
+                                if clients.get("drone_control"): await clients["drone_control"].send("MISSION_ACTIVE")
+                            except Exception:
+                                pass
+                        else:
+                            print("⚠️ Не удается сопрячь: дрон или пульт еще не подключены.")
+                    continue
+
+                elif message == "STOP_MISSION":
+                    async with lock:
+                        mission_started = False
+                        print("🔒 ПОТОК ПРИНУДИТЕЛЬНО ЗАКРЫТ ПИЛОТОМ! Трафик остановлен.")
                         try:
-                            await clients["controller_control"].send("MISSION_ACTIVE")
-                            await clients["drone_control"].send("MISSION_ACTIVE")
+                            if clients.get("controller_control"): await clients["controller_control"].send("MISSION_STOPPED")
+                            if clients.get("drone_control"): await clients["drone_control"].send("MISSION_STOPPED")
                         except Exception:
                             pass
-                    else:
-                        print("⚠️ Не удается сопрячь: дрон или пульт еще не подключены к серверу.")
-                continue
+                    continue
 
-            # Оптимизация логов: бинарные кадры не печатаем в консоль, чтобы не грузить ядро виртуалки e2-micro
+            # Оптимизация логов: бинарные кадры не печатаем в консоль
             if not isinstance(message, bytes):
                 print(f"{role} -> {message}")
 
